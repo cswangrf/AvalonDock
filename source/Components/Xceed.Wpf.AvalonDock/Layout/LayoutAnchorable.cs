@@ -413,13 +413,13 @@ namespace Xceed.Wpf.AvalonDock.Layout
 
       RaisePropertyChanging( "IsHidden" );
       RaisePropertyChanging( "IsVisible" );
-      //if (Parent is ILayoutPane)
+      if (Parent is ILayoutGroup)
       {
         var parentAsGroup = Parent as ILayoutGroup;
         PreviousContainer = parentAsGroup;
         PreviousContainerIndex = parentAsGroup.IndexOfChild( this );
       }
-      Root.Hidden.Add( this );
+      Root?.Hidden?.Add( this );
       RaisePropertyChanged( "IsVisible" );
       RaisePropertyChanged( "IsHidden" );
       NotifyIsVisibleChanged();
@@ -456,6 +456,8 @@ namespace Xceed.Wpf.AvalonDock.Layout
           previousContainerAsLayoutGroup.InsertChildAt( PreviousContainerIndex, this );
         else
           previousContainerAsLayoutGroup.InsertChildAt( previousContainerAsLayoutGroup.ChildrenCount, this );
+
+        Parent = previousContainerAsLayoutGroup;
         IsSelected = true;
         IsActive = true;
       }
@@ -763,6 +765,14 @@ namespace Xceed.Wpf.AvalonDock.Layout
 
     private void UpdateParentVisibility()
     {
+      // Element is Hidden since it has no parent but a previous parent
+      if (this.PreviousContainer != null && Parent == null)
+      {
+        // Go back to using previous parent
+        Parent = PreviousContainer;
+////        PreviousContainer = null;
+      }
+
       var parentPane = Parent as ILayoutElementWithVisibility;
       if( parentPane != null )
         parentPane.ComputeVisibility();

@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows;
@@ -53,9 +54,27 @@ namespace Xceed.Wpf.AvalonDock.Controls
         _windowHandler.FocusChanged += new EventHandler<FocusChangeEventArgs>( WindowFocusChanging );
         //_windowHandler.Activate += new EventHandler<WindowActivateEventArgs>(WindowActivating);
         _windowHandler.Attach();
+        if (Application.Current != null)
+        {
+          //Application.Current.Exit += new ExitEventHandler( Current_Exit );
+          //Application.Current.Dispatcher.Invoke(new Action(() => Application.Current.Exit += new ExitEventHandler(Current_Exit)));
+          var disp = Application.Current.Dispatcher;
+          Action subscribeToExitAction = new Action(() => Application.Current.Exit += new ExitEventHandler(Current_Exit));
+          if (disp.CheckAccess())
+          {
+           // if we are already on the dispatcher thread we don't need to call Invoke/BeginInvoke
+           subscribeToExitAction();
+          }
+          else
+          {
+            // For resolve issue "System.InvalidOperationException: Cannot perform this operation while dispatcher processing is suspended." make async subscribing instead of sync subscribing.
+            int disableProcessingCount = (int?)typeof(Dispatcher).GetField("_disableProcessingCount", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(disp) ?? 0;
 
-        if( Application.Current != null )
-          Application.Current.Exit += new ExitEventHandler( Current_Exit );
+            var dispatcherResult = disableProcessingCount == 0
+            ? disp.Invoke(subscribeToExitAction)
+            : disp.BeginInvoke(subscribeToExitAction);
+          }
+        }
       }
 
       manager.PreviewGotKeyboardFocus += new KeyboardFocusChangedEventHandler( manager_PreviewGotKeyboardFocus );
@@ -142,7 +161,9 @@ namespace Xceed.Wpf.AvalonDock.Controls
 
     private static void Current_Exit( object sender, ExitEventArgs e )
     {
-      Application.Current.Exit -= new ExitEventHandler( Current_Exit );
+      if (Application.Current != null)
+         Application.Current.Exit -= new ExitEventHandler(Current_Exit);
+
       if( _windowHandler != null )
       {
         _windowHandler.FocusChanged -= new EventHandler<FocusChangeEventArgs>( WindowFocusChanging );

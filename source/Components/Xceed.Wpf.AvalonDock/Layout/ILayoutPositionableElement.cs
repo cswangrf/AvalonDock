@@ -26,16 +26,37 @@ namespace Xceed.Wpf.AvalonDock.Layout
       set;
     }
 
+    double FixedDockWidth { get; }
+
+    double ResizableAbsoluteDockWidth
+    {
+      get; 
+      set;
+    }
+
     GridLength DockHeight
     {
       get;
       set;
     }
 
+    double FixedDockHeight { get; }
+
+    double ResizableAbsoluteDockHeight
+    {
+      get; 
+      set;
+    }
+
+    double CalculatedDockMinWidth();
+
     double DockMinWidth
     {
       get; set;
     }
+
+    double CalculatedDockMinHeight();
+
     double DockMinHeight
     {
       get; set;
@@ -53,7 +74,7 @@ namespace Xceed.Wpf.AvalonDock.Layout
   }
 
 
-  internal interface ILayoutPositionableElementWithActualSize
+  internal interface ILayoutPositionableElementWithActualSize : ILayoutPositionableElement
   {
     double ActualWidth
     {
