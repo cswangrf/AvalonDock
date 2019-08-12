@@ -15,6 +15,7 @@
   ***********************************************************************************/
 
 using System;
+using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Runtime.InteropServices;
@@ -58,6 +59,7 @@ namespace Xceed.Wpf.AvalonDock.Controls
     {
       this.Loaded += new RoutedEventHandler( OnLoaded );
       this.Unloaded += new RoutedEventHandler( OnUnloaded );
+      Closing += OnClosing;
       _model = model;
     }
 
@@ -308,8 +310,8 @@ namespace Xceed.Wpf.AvalonDock.Controls
         }
       }
 
-      var manager = _model.Root.Manager;
-      if( manager.Theme != null )
+      var manager = _model.Root?.Manager;
+      if( manager?.Theme != null )
       {
         if( manager.Theme is DictionaryTheme )
         {
@@ -401,9 +403,9 @@ namespace Xceed.Wpf.AvalonDock.Controls
       return IntPtr.Zero;
     }
 
-    internal void InternalClose()
+    internal void InternalClose(bool closeInitiatedByUser = false)
     {
-      _internalCloseFlag = true;
+      _internalCloseFlag = !closeInitiatedByUser;
       if( !_isClosing )
       {
         _isClosing = true;
@@ -450,6 +452,19 @@ namespace Xceed.Wpf.AvalonDock.Controls
       {
         _hwndSrc.RemoveHook( _hwndSrcHook );
         InternalClose();
+      }
+    }
+
+    private void OnClosing(object sender, CancelEventArgs e)
+    {
+      Closing -= OnClosing;
+
+      // If this window was Closed not from InternalClose method,
+      // mark it as closing to avoid "InvalidOperationException: : Cannot set Visibility to Visible or call Show, ShowDialog,
+      // Close, or WindowInteropHelper.EnsureHandle while a Window is closing".
+      if (!_isClosing)
+      {
+        _isClosing = true;
       }
     }
 
@@ -515,6 +530,14 @@ namespace Xceed.Wpf.AvalonDock.Controls
     }
 
     #endregion
+
+    public virtual void EnableBindings()
+    {
+    }
+
+    public virtual void DisableBindings()
+    {
+    }
 
     #region Internal Classes
 

@@ -43,6 +43,7 @@ namespace Xceed.Wpf.AvalonDock
     private AutoHideWindowManager _autoHideWindowManager;
     private FrameworkElement _autohideArea;
     private List<LayoutFloatingWindowControl> _fwList = new List<LayoutFloatingWindowControl>();
+    private List<LayoutFloatingWindowControl> _fwHiddenList = new List<LayoutFloatingWindowControl>();
     private OverlayWindow _overlayWindow = null;
     private List<IDropArea> _areas = null;
     private bool _insideInternalSetActiveContent = false;
@@ -178,11 +179,23 @@ namespace Xceed.Wpf.AvalonDock
 
         foreach( var fw in _fwList )
         {
-          //fw.Owner = Window.GetWindow(this);
-          //fw.SetParentToMainWindowOf(this);
+          var window = fw.Model as LayoutAnchorableFloatingWindow;
+          if (window != null && window.RootPanel.IsMaximized)
+          {
+           fw.WindowState = WindowState.Normal;
+           fw.Show();
+           fw.WindowState = WindowState.Maximized;
+          }
+          else
+           fw.Show();
+           //fw.Owner = Window.GetWindow(this);
+           //fw.SetParentToMainWindowOf(this);
         }
-      }
 
+        // In order to prevent resource leaks, unsubscribe from SizeChanged event for case when user call loading of Layout Settigns.
+        SizeChanged -= OnSizeChanged;
+        SizeChanged += OnSizeChanged;
+      }
 
       if( newLayout != null )
       {
@@ -2061,16 +2074,18 @@ namespace Xceed.Wpf.AvalonDock
         };
         newFW.SetParentToMainWindowOf( this );
 
-        var paneForExtensions = modelFW.RootPanel.Children.OfType<LayoutAnchorablePane>().FirstOrDefault();
-        if( paneForExtensions != null )
+        // Floating Window can also contain only Pane Groups at its base (issue #27) so we check for
+        // RootPanel (which is a LayoutAnchorablePaneGroup) and make sure the window is positioned back
+        // in current (or nearest) monitor
+        var panegroup = modelFW.RootPanel;
+        if (panegroup != null)
         {
-          //ensure that floating window position is inside current (or nearest) monitor
-          paneForExtensions.KeepInsideNearestMonitor();
+          panegroup.KeepInsideNearestMonitor();  // Check position is valid in current setup
 
-          newFW.Left = paneForExtensions.FloatingLeft;
-          newFW.Top = paneForExtensions.FloatingTop;
-          newFW.Width = paneForExtensions.FloatingWidth;
-          newFW.Height = paneForExtensions.FloatingHeight;
+          newFW.Left = panegroup.FloatingLeft;   // Position the window to previous or nearest valid position
+          newFW.Top = panegroup.FloatingTop;
+          newFW.Width = panegroup.FloatingWidth;
+          newFW.Height = panegroup.FloatingHeight;
         }
 
         newFW.ShowInTaskbar = false;
@@ -2080,11 +2095,11 @@ namespace Xceed.Wpf.AvalonDock
            newFW.Show();
         } ), DispatcherPriority.Send );
 
-        // Do not set the WindowState before showing or it will be lost
-        if( paneForExtensions != null && paneForExtensions.IsMaximized )
+        if( panegroup != null && panegroup.IsMaximized )
         {
           newFW.WindowState = WindowState.Maximized;
         }
+
         return newFW;
       }
 
@@ -2196,7 +2211,7 @@ namespace Xceed.Wpf.AvalonDock
       while( currentHandle != IntPtr.Zero )
       {
         LayoutFloatingWindowControl ctrl = _fwList.FirstOrDefault( fw => new WindowInteropHelper( fw ).Handle == currentHandle );
-        if( ctrl != null && ctrl.Model.Root.Manager == this )
+        if( ctrl != null && ctrl.Model.Root != null && ctrl.Model.Root.Manager == this )
           yield return ctrl;
 
         currentHandle = Win32Helper.GetWindow( currentHandle, ( uint )Win32Helper.GetWindow_Cmd.GW_HWNDNEXT );
@@ -2356,9 +2371,26 @@ namespace Xceed.Wpf.AvalonDock
           TopSidePanel = CreateUIElementForModel( Layout.TopSide ) as LayoutAnchorSideControl;
           RightSidePanel = CreateUIElementForModel( Layout.RightSide ) as LayoutAnchorSideControl;
           BottomSidePanel = CreateUIElementForModel( Layout.BottomSide ) as LayoutAnchorSideControl;
+
+          // In order to prevent resource leaks, unsubscribe from SizeChanged event for case when we have no stored Layout settings.
+          SizeChanged -= OnSizeChanged;
+          SizeChanged += OnSizeChanged;
         }
 
         SetupAutoHideWindow();
+
+        foreach( var fwc in _fwHiddenList )
+        {
+          fwc.EnableBindings();
+          if( fwc.KeepContentVisibleOnClose )
+          {
+            fwc.Show();
+            fwc.KeepContentVisibleOnClose = false;
+          }
+
+           _fwList.Add( fwc );
+        }
+        _fwHiddenList.Clear();
 
         //load windows not already loaded!
         foreach( var fw in Layout.FloatingWindows.Where( fw => !_fwList.Any( fwc => fwc.Model == fw ) ) )
@@ -2371,8 +2403,24 @@ namespace Xceed.Wpf.AvalonDock
       }
     }
 
+    /// <summary>
+    /// Method executes when the <see cref="DockingManager"/> control has changed its height and/or width.
+    /// </summary>
+    /// <param name="sender"></param>
+    /// <param name="e"></param>
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+      // Lets make sure this always remains non-negative to avoid crach in layout system
+      double width = Math.Max(ActualWidth - GridSplitterWidth - RightSidePanel.ActualWidth - LeftSidePanel.ActualWidth, 0);
+      double height = Math.Max(ActualHeight - GridSplitterHeight - TopSidePanel.ActualHeight - BottomSidePanel.ActualHeight, 0);
+
+      LayoutRootPanel.AdjustFixedChildrenPanelSizes(new Size(width, height));
+    }
+
     private void DockingManager_Unloaded( object sender, RoutedEventArgs e )
     {
+      SizeChanged -= OnSizeChanged;
+
       if( !DesignerProperties.GetIsInDesignMode( this ) )
       {
         if( _autoHideWindowManager != null )
@@ -2387,12 +2435,25 @@ namespace Xceed.Wpf.AvalonDock
 
         foreach( var fw in _fwList.ToArray() )
         {
-          //fw.Owner = null;
-          fw.SetParentWindowToNull();
-          fw.KeepContentVisibleOnClose = true;
-          fw.Close();
+          ////fw.Owner = null;
+          //fw.SetParentWindowToNull();
+          //fw.KeepContentVisibleOnClose = true;
+          //// To avoid calling Close method multiple times.
+          //fw.InternalClose(true);
+
+          // Unloaded can occure not only after closing of the application, but after switching between tabs.
+          // For such case it's better to hide the floating windows instead of closing it.
+          // We clear bindings on visibility during the owner is unloaded.
+          if( fw.IsVisible )
+          {
+            fw.KeepContentVisibleOnClose = true;
+            fw.Hide();
+          }
+          fw.DisableBindings();
+          _fwHiddenList.Add( fw );
         }
-         _fwList.Clear();
+
+        _fwList.Clear();
 
         DestroyOverlayWindow();
         FocusElementManager.FinalizeFocusManagement( this );
@@ -3354,11 +3415,33 @@ namespace Xceed.Wpf.AvalonDock
         }
       }
 
-      foreach( var areaHost in this.FindVisualChildren<LayoutDocumentPaneControl>() )
+      // Determine if floatingWindow is configured to dock as document or not
+      bool dockAsDocument = true;
+      if (isDraggingDocuments == false)
       {
-        _areas.Add( new DropArea<LayoutDocumentPaneControl>(
-            areaHost,
-            DropAreaType.DocumentPane ) );
+        var toolWindow = draggingWindow.Model as LayoutAnchorableFloatingWindow;
+        if (toolWindow != null)
+        {
+          foreach (var item in GetAnchorableInFloatingWindow(draggingWindow))
+          {
+            if (item.CanDockAsTabbedDocument == false)
+            {
+              dockAsDocument = false;
+              break;
+            }
+          }
+        }
+      }
+
+      // Dock only documents and tools in DocumentPane if configuration does allow that
+      if (dockAsDocument == true)
+      {
+        foreach( var areaHost in this.FindVisualChildren<LayoutDocumentPaneControl>() )
+        {
+          _areas.Add( new DropArea<LayoutDocumentPaneControl>(
+              areaHost,
+              DropAreaType.DocumentPane ) );
+        }
       }
 
       foreach( var areaHost in this.FindVisualChildren<LayoutDocumentPaneGroupControl>() )
@@ -3375,6 +3458,53 @@ namespace Xceed.Wpf.AvalonDock
       return _areas;
     }
 
+    /// <summary>
+    /// Finds all <see cref="LayoutAnchorable"/> objects (toolwindows) within a
+    /// <see cref="LayoutFloatingWindow"/> (if any) and return them.
+    /// </summary>
+    /// <param name="draggingWindow"></param>
+    /// <returns></returns>
+    private IEnumerable<LayoutAnchorable> GetAnchorableInFloatingWindow(LayoutFloatingWindowControl draggingWindow)
+    {
+      var layoutAnchorableFloatingWindow = draggingWindow.Model as LayoutAnchorableFloatingWindow;
+      if (layoutAnchorableFloatingWindow != null)
+      {
+          //big part of code for getting type
+          var layoutAnchorablePane = layoutAnchorableFloatingWindow.SinglePane as LayoutAnchorablePane;
+
+          if (layoutAnchorablePane != null
+              && (layoutAnchorableFloatingWindow.IsSinglePane
+              && layoutAnchorablePane.SelectedContent != null))
+          {
+              var layoutAnchorable = ((LayoutAnchorablePane)layoutAnchorableFloatingWindow.SinglePane).SelectedContent as LayoutAnchorable;
+              yield return layoutAnchorable;
+          }
+          else
+          {
+            foreach (var item in GetLayoutAnchorable(layoutAnchorableFloatingWindow.RootPanel))
+            {
+              yield return item;
+            }
+          }
+      }
+    }
+
+    /// <summary>
+    /// Finds all <see cref="LayoutAnchorable"/> objects (toolwindows) within a
+    /// <see cref="LayoutAnchorablePaneGroup"/> (if any) and return them.
+    /// </summary>
+    /// <param name="layoutAnchPaneGroup"></param>
+    /// <returns></returns>
+    internal IEnumerable<LayoutAnchorable> GetLayoutAnchorable(LayoutAnchorablePaneGroup layoutAnchPaneGroup)
+    {
+      if (layoutAnchPaneGroup != null)
+      {
+        foreach (var anchorable in layoutAnchPaneGroup.Descendents().OfType<LayoutAnchorable>())
+        {
+          yield return anchorable;
+        }
+      }
+    }
     #endregion
   }
 }
